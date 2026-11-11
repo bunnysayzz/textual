@@ -370,12 +370,42 @@ class XTermParser(Parser[Message]):
 
         codes, end = match.groups(default="")
         codepoint_str, modifiers_str, text_str, *_ = codes.split(";") + ["", "", ""]
-        codepoint = int(codepoint_str or "1")
-        modifiers = int(modifiers_str or "0")
+        # Kitty sub-parameters: the first field is
+        # unicode-key-code[:shifted-key-code[:base-layout-key-code]] and the
+        # second is modifiers[:event-type]. Only the first sub-parameter of
+        # each field is a plain number, so split on ":" before int().
+        codepoint_parts = codepoint_str.split(":")
+        codepoint = int(codepoint_parts[0] or "1")
+        modifiers = int(modifiers_str.partition(":")[0] or "0")
+        shift = bool(modifiers and (modifiers - 1) & 1)
+        shifted_codepoint = (
+            int(codepoint_parts[1])
+            if shift and len(codepoint_parts) > 1 and codepoint_parts[1].isdecimal()
+            else None
+        )
 
         for text in self._parse_colon_codepoints(text_str):
+            # The character this key reports: the text field wins, then the
+            # shifted alternate, then the base codepoint.
+            character = text or (
+                chr(shifted_codepoint)
+                if shifted_codepoint is not None
+                else chr(codepoint)
+            )
+            # With shift as the only modifier and no text to say otherwise, a
+            # lowercase letter is the shifted (uppercase) key, matching what
+            # the same key reports outside the Kitty protocol.
+            if (
+                text is None
+                and shifted_codepoint is None
+                and modifiers == 2
+                and character.isascii()
+                and character.islower()
+            ):
+                character = character.upper()
+
             if not (key := FUNCTIONAL_KEYS.get(f"{codepoint}{end}", "")):
-                key = _character_to_key(text if text else chr(codepoint))
+                key = _character_to_key(character)
 
             key_tokens: list[str] = []
             # The modifier is redundant on a modifier key
@@ -388,7 +418,15 @@ class XTermParser(Parser[Message]):
                 # Not convinced of the utility in reporting caps_lock and num_lock
                 MODIFIERS = ("alt", "ctrl", "super", "hyper", "meta")
                 # Ignore caps_lock and num_lock modifiers
-                if modifier_bits & 1 and (text is None or text.isspace()):
+                # Shift is also redundant when the character already carries
+                # it, e.g. shift+H reports "H" rather than "shift+H".
+                if (
+                    modifier_bits & 1
+                    and (text is None or text.isspace())
+                    and not (
+                        modifiers == 2 and character.isascii() and character.isupper()
+                    )
+                ):
                     key_tokens.append("shift")
                 for bit, modifier in enumerate(MODIFIERS, 1):
                     if modifier == "alt" and text is not None:

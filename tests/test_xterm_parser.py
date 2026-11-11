@@ -188,6 +188,12 @@ def test_double_escape(parser):
         ("B", "B"),
         ("\x1b[97;;97u", "a"),
         ("\x1b[97;2;65u", "A"),
+        # Kitty colon sub-parameters (#6746, #6757)
+        ("\x1b[97:65;2;65u", "A"),
+        ("\x1b[57441;1:3u", "left_shift"),
+        ("\x1b[104;2u", "H"),
+        ("\x1b[104:72;2u", "H"),
+        ("\x1b[72;2u", "H"),
         ("\x1ba", "alt+a"),
         ("\x1b[97;3u", "alt+a"),
         ("\x1b[97;4u", "alt+shift+a"),
